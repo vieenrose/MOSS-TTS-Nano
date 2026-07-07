@@ -13,9 +13,15 @@ Measured, same phone-attendant sentence, 2 CPU threads:
 
 | runtime | RTF | note |
 |---|---|---|
-| ONNX Runtime, fp32 | 0.31 | reference |
-| **ONNX Runtime, int8** | **0.21** | **~1.5×**, weights-only dynamic QInt8, near-lossless |
+| **ONNX Runtime, fp32** | 0.31 | **recommended** — best correctness |
+| ONNX Runtime, int8 | 0.21 | ~1.5× faster **but degrades correctness** (see caveat below) |
 | ggml (gguf Q8), per-call | ~0.5–3× slower on x86 | gguf reload per call + ggml CPU matmul < MLAS |
+
+> ⚠️ **int8 is NOT recommended for quality.** Weights-only dynamic QInt8 is near-lossless for
+> feed-forward models, but this is a **100M autoregressive codec-token** TTS: quantization noise
+> **compounds per step** through the AR loop, producing audibly worse / less-correct samples vs
+> fp32. The ~1.5× speed isn't worth it. **Use fp32** unless you have a way to keep the AR path
+> higher-precision (e.g. quantize only the codec/feed-forward parts, or QDQ + calibration).
 
 On the Jetson Nano **GPU**, the ggml path hit **RTF ~0.35** with a custom sm_53 matvec kernel
 (2.6× over stock ggml). So the winner flips by device: **ggml on the Nano GPU, ORT on x86 CPU.**
@@ -30,8 +36,9 @@ the fix is to **load each graph with its external data merged first**, then quan
 python cpu-optimization/quantize_onnx_int8.py <onnx_dir> <int8_out_dir>
 ```
 
-Weights-only dynamic quant keeps activations fp32 → minimal quality impact for this
-codec-token AR TTS. ~1.5× faster, ~4× smaller weights per big graph (420 MB → 105 MB).
+Weights-only dynamic quant keeps activations fp32 and is near-lossless for feed-forward
+models — but on this AR TTS it **degrades correctness** (errors compound per step). ~1.5×
+faster + ~4× smaller weights (420 MB → 105 MB), but fp32 is preferred for quality.
 
 ## Other CPU levers (already in the reference runtime)
 - **`local_cached_step`** — KV-cached local decoder: the 16-codebook inner loop runs O(L) instead
@@ -45,7 +52,7 @@ codec-token AR TTS. ~1.5× faster, ~4× smaller weights per big graph (420 MB �
 ## Real-time caveat (x86 CPU)
 MOSS-Nano-100M is autoregressive: even int8 on 2 shared vCPUs is **RTF > 1** in the wild
 (~2 with int8), i.e. a **batch "generate-then-play"** experience, not real-time streaming.
-Real-time needs a GPU (or more/faster CPU cores). int8 narrows the gap; it doesn't cross it.
+Real-time needs a GPU (or more/faster CPU cores). int8 narrows the speed gap but hurts correctness on this AR model, so it does not cross it.
 
 ## Related
 - ggml port (Jetson Nano, custom Maxwell matvec kernel): `RapidSpeech.cpp` fork, arch `moss_tts_nano`.
