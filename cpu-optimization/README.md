@@ -54,6 +54,17 @@ MOSS-Nano-100M is autoregressive: even int8 on 2 shared vCPUs is **RTF > 1** in 
 (~2 with int8), i.e. a **batch "generate-then-play"** experience, not real-time streaming.
 Real-time needs a GPU (or more/faster CPU cores). int8 narrows the speed gap but hurts correctness on this AR model, so it does not cross it.
 
+
+
+## Mixed precision — tried, does NOT work on the AR transformer
+Attempt: keep attention (KV path) fp32, quantize only FFN matmuls to int8. **Failed.**
+X-ASR CER on the same seeded utterance: **fp32 0.61 (best)** · int8 0.68 · mixed 0.83.
+Reason: in a transformer the **FFN output feeds the residual stream → the next layer's
+attention → K,V → the KV cache**, so FFN quant noise still reaches the AR state and
+**compounds**. There is no clean feed-forward-only cut inside an AR transformer. The only
+quant target that does not compound is **outside** the AR loop (the codec decoder), which
+is a small slice of compute. **Keep the AR transformer fp32.**
+
 ## Related
 - ggml port (Jetson Nano, custom Maxwell matvec kernel): `RapidSpeech.cpp` fork, arch `moss_tts_nano`.
 - A/B demo (ONNX vs ggml, voice clone, entity frontend): HF Space `Luigi/PrimeTTS-vs-Inflect-Nano-v1`.
